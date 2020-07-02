@@ -21,6 +21,15 @@ contract IVerifier {
 contract Tornado is MerkleTreeWithHistory, ReentrancyGuard {
   uint256 public denomination;
   mapping(bytes32 => bool) public nullifierHashes;
+  
+  // store the vote amount per nullifier
+  mapping(bytes32 => mapping(address => uint256)) public votes;
+  mapping(bytes32 => uint256) public totalVotes;
+  mapping(bytes32 => uint256) public voteIndex;
+  mapping(bytes32 => bool) public withdrawApproved;
+  mapping(address => uint256) public candidates;
+
+  
   // we store all commitments just to prevent accidental deposits with the same commitment
   mapping(bytes32 => bool) public commitments;
   IVerifier public verifier;
@@ -72,6 +81,51 @@ contract Tornado is MerkleTreeWithHistory, ReentrancyGuard {
   /** @dev this function is defined in a child contract */
   function _processDeposit() internal;
 
+  
+  /**
+    @dev Vote on an address. `proof` is a zkSNARK proof data, and input is an array of circuit public inputs
+    `input` array consists of:
+      - merkle root of all deposits in the contract
+      - hash of unique deposit nullifier to prevent double spends
+      - the recipient of funds
+      - optional fee that goes to the transaction sender (usually a relay)
+
+    This proof is the same as the withdraw proof. The only difference of the function is that it does not result
+    in a transfer, it results in a registration of a vote. The recipient and refund in the proof are used different:
+      - recipient is the address voted one
+      - refund is the amount of the vote
+      - fee is used as index for current vote proofs.
+  
+  */
+  function vote(bytes calldata _proof, bytes32 _root, bytes32 _nullifierHash, address payable _recipient, address payable _relayer, uint256 _fee, uint256 _refund) external payable nonReentrant {
+    require(withdrawApproved[_nullifierHash] == false, "Vote not approved");
+    require(_fee == voteIndex[_nullifierHash], "Proof index not equal to index vote");
+    require(!nullifierHashes[_nullifierHash], "The note has been already spent");
+    require(isKnownRoot(_root), "Cannot find your merkle root"); // Make sure to use a recent one
+    require(verifier.verifyProof(_proof, [uint256(_root), uint256(_nullifierHash), uint256(_recipient), uint256(_relayer), _fee, _refund]), "Invalid vote proof");
+    require(_refund <= denomination, "Individual vote exceeds deposit value");
+    voteIndex[_nullifierHash] += 1;
+    totalVotes[_nullifierHash] = totalVotes[_nullifierHash] - votes[_nullifierHash][_recipient];
+    require(totalVotes[_nullifierHash] + _refund <= denomination, "Total vote exceeds deposit value");
+    totalVotes[_nullifierHash] = totalVotes[_nullifierHash] + _refund;
+    candidates[_recipient] = candidates[_recipient] - votes[_nullifierHash][_recipient] + _refund;
+    votes[_nullifierHash][_recipient] = _refund;
+  }
+
+  /**
+    @dev approve the withdraw by sending a proof with the address of the contract as recipient.
+    This mitgates the risk of withdraw based on the vote proof. 
+  */
+  function withdrawApprove(bytes calldata _proof, bytes32 _root, bytes32 _nullifierHash, address payable _recipient, address payable _relayer, uint256 _fee, uint256 _refund) external payable nonReentrant {
+    require(withdrawApproved[_nullifierHash] == false, "Withdraw already approved");
+    require(!nullifierHashes[_nullifierHash], "The note has been already spent");
+    require(isKnownRoot(_root), "Cannot find your merkle root"); // Make sure to use a recent one
+    require(verifier.verifyProof(_proof, [uint256(_root), uint256(_nullifierHash), uint256(_recipient), uint256(_relayer), _fee, _refund]), "Invalid withdraw proof");
+    require(totalVotes[_nullifierHash] == 0, "Cant withdraw with open votes");
+    require(_recipient == address(this), "Withdraw approval not accepted");
+    withdrawApproved[_nullifierHash] = true;
+  }
+
   /**
     @dev Withdraw a deposit from the contract. `proof` is a zkSNARK proof data, and input is an array of circuit public inputs
     `input` array consists of:
@@ -79,8 +133,11 @@ contract Tornado is MerkleTreeWithHistory, ReentrancyGuard {
       - hash of unique deposit nullifier to prevent double spends
       - the recipient of funds
       - optional fee that goes to the transaction sender (usually a relay)
+
+      No withdraw if there is a open vote.
   */
   function withdraw(bytes calldata _proof, bytes32 _root, bytes32 _nullifierHash, address payable _recipient, address payable _relayer, uint256 _fee, uint256 _refund) external payable nonReentrant {
+    require(withdrawApproved[_nullifierHash] == true, "Withdraw not approved");
     require(_fee <= denomination, "Fee exceeds transfer value");
     require(!nullifierHashes[_nullifierHash], "The note has been already spent");
     require(isKnownRoot(_root), "Cannot find your merkle root"); // Make sure to use a recent one

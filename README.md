@@ -1,5 +1,9 @@
-# Tornado Cash Privacy Solution [![Build Status](https://travis-ci.org/tornadocash/tornado-core.svg?branch=master)](https://travis-ci.org/tornadocash/tornado-core)
+This is a fork of tornado cash. The tornado cash mixer is adjusted to allow votes. This opens the possibility for instant private (mixed) voting.
 
+# Tornado governance
+Below first the description of tornado cash for background information. Then the description of changes for tornado voting.
+
+#### Tornado cash 
 Tornado Cash is a non-custodial Ethereum and ERC20 privacy solution based on zkSNARKs. It improves transaction privacy by breaking the on-chain link between recipient and destination addresses. It uses a smart contract that accepts ETH deposits that can be withdrawn by a different address. Whenever ETH is withdrawn by the new address, there is no way to link the withdrawal to the deposit, ensuring complete privacy.
 
 To make a deposit user generates a secret and sends its hash (called a commitment) along with the deposit amount to the Tornado smart contract. The contract accepts the deposit and adds the commitment to its list of deposits.
@@ -7,6 +11,20 @@ To make a deposit user generates a secret and sends its hash (called a commitmen
 Later, the user decides to make a withdrawal. In order to do that, the user should provide a proof that he or she possesses a secret to an unspent commitment from the smart contract’s list of deposits. zkSnark technology allows that to happen without revealing which exact deposit corresponds to this secret. The smart contract will check the proof, and transfer deposited funds to the address specified for withdrawal. An external observer will be unable to determine which deposit this withdrawal came from.
 
 You can read more about it in [this medium article](https://medium.com/@tornado.cash/introducing-private-transactions-on-ethereum-now-42ee915babe0)
+
+#### Tornado voting
+Tornado voting is an iteration of tornado cash and Continuous Approval Voting (CAV). It uses the principle of the tornado cash mixer to mix votes in the CAV style governance system currently used by MakerDao. 
+
+The design is as follows:
+1. Holders of the governance token deposit their token in a pool. This pool can receive interest (for example DSR style) to incentivice participation. Deposits to the pool are only allowed for fixed values (for example 0.1, 1, 10 and 100). When depositing to the pool the token holder needs to submit a commit (same as tornado cash).
+2. Next a user can add their vote by revealing the nullifier of the commit and an amount < or == then their deposit (0.1, 1, 10 or 100). This vote can be made by adding the address they are voting for (based on CAV). Their nullifier is stored in the contract to check double votes. The contract adds the vote to the candidate.
+3. During CAV a user can change their vote by simply adding a new vote with their nullifier, this removes the old vote for their nullifier and adds the new vote weight. Their nullifier can never have a vote weight more then their deposit.
+4. To remove the token from the pool simply set vote total to 0 and withdraw using the nullifier. 
+
+The main benefits of this implementation are:
+- The pool (potential) interest is an incentive for token holders to add to the privacy pool. Further it mitigates the risk of oppertunity cost, because the token holder locks the token for voting instead of earning interest.
+- Tornado governance fixes the low liquidaty in mixers for governance tokens. Since governance tokens are expected to only move for a vote a mixer is expected to have a low volume of open deposits (privacy). Using a pool and instant vote from the pool uses the full liquidity of the voters and in addition the non voters that like to earn interest from the pool.
+- Since the mixer is embedded every governance participant automatically benefits from the added privacy.
 
 ## Specs
 - Deposit gas const: 1088354 (43381 + 50859 * tree_depth)
@@ -30,7 +48,9 @@ During the audit no critical issues were found and all outstanding issues were f
 * Smart contract audit https://tornado.cash/Tornado_solidity_audit.pdf
 * Zk-SNARK circuits audit https://tornado.cash/Tornado_circuit_audit.pdf
 
-Underlying circomlib dependency is currently being audited, and the team already published most of the fixes for found issues
+Underlying circomlib dependency is currently being audited, and the team already published most of the fixes for found issues.
+
+*Tornado governance note: the tornado governance adjustment only affect the tornado.sol smart contract by adding a vote function (and a limitation to the withdraw function). Because these adjustments are limited and do not affect the zero knowlegde code, much of the code and therefore safety is the same as tornado cash. See the above for the tornado cash code audits. Further see the changes for the adjustments related to tornado governance.*
 
 ## Requirements
 1. `node v11.15.0`

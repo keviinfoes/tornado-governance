@@ -176,7 +176,39 @@ contract('ETHTornado', accounts => {
       const { root, path_elements, path_index } = await tree.path(0)
 
       // Circuit input
+      //First approve withdraw by submitting proof with address contract tornado
       const input = stringifyBigInts({
+        // public
+        root,
+        nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
+        relayer,
+        recipient: tornado.address,
+        fee,
+        refund,
+
+        // private
+        nullifier: deposit.nullifier,
+        secret: deposit.secret,
+        pathElements: path_elements,
+        pathIndices: path_index,
+      })
+      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
+      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
+        toFixedHex(input.root),
+        toFixedHex(input.nullifierHash),
+        toFixedHex(input.recipient, 20),
+        toFixedHex(input.relayer, 20),
+        toFixedHex(input.fee),
+        toFixedHex(input.refund)
+      ]
+      const { logsA } = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' })
+    
+      //Second submit withdraw proof
+      const inputB = stringifyBigInts({
         // public
         root,
         nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
@@ -192,9 +224,9 @@ contract('ETHTornado', accounts => {
         pathIndices: path_index,
       })
 
-
-      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
-      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      const proofDataB = await websnarkUtils.genWitnessAndProve(groth16, inputB, circuit, proving_key)
+      let output = websnarkUtils.toSolidityInput(proofDataB)
+      let proofB = output.proof
 
       const balanceTornadoBefore = await web3.eth.getBalance(tornado.address)
       const balanceRelayerBefore = await web3.eth.getBalance(relayer)
@@ -206,15 +238,15 @@ contract('ETHTornado', accounts => {
       // Uncomment to measure gas usage
       // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
       // console.log('withdraw gas:', gas)
-      const args = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
-        toFixedHex(input.recipient, 20),
-        toFixedHex(input.relayer, 20),
-        toFixedHex(input.fee),
-        toFixedHex(input.refund)
+      const argsB = [
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
       ]
-      const { logs } = await tornado.withdraw(proof, ...args, { from: relayer, gasPrice: '0' })
+      const { logs } = await tornado.withdraw(proofB, ...argsB, { from: relayer, gasPrice: '0' })
 
       const balanceTornadoAfter = await web3.eth.getBalance(tornado.address)
       const balanceRelayerAfter = await web3.eth.getBalance(relayer)
@@ -234,29 +266,34 @@ contract('ETHTornado', accounts => {
       isSpent = await tornado.isSpent(toFixedHex(input.nullifierHash))
       isSpent.should.be.equal(true)
     })
-
     it('should prevent double spend', async () => {
       const deposit = generateDeposit()
       await tree.insert(deposit.commitment)
       await tornado.deposit(toFixedHex(deposit.commitment), { value, from: sender })
 
       const { root, path_elements, path_index } = await tree.path(0)
-
+      //First approve withdraw by submitting proof with address contract tornado
       const input = stringifyBigInts({
+        // public
         root,
         nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
-        nullifier: deposit.nullifier,
-        relayer: operator,
-        recipient,
+        relayer,
+        recipient: tornado.address,
         fee,
         refund,
+
+        // private
+        nullifier: deposit.nullifier,
         secret: deposit.secret,
         pathElements: path_elements,
         pathIndices: path_index,
       })
       const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
       const { proof } = websnarkUtils.toSolidityInput(proofData)
-      const args = [
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
         toFixedHex(input.root),
         toFixedHex(input.nullifierHash),
         toFixedHex(input.recipient, 20),
@@ -264,19 +301,10 @@ contract('ETHTornado', accounts => {
         toFixedHex(input.fee),
         toFixedHex(input.refund)
       ]
-      await tornado.withdraw(proof, ...args, { from: relayer }).should.be.fulfilled
-      const error = await tornado.withdraw(proof, ...args, { from: relayer }).should.be.rejected
-      error.reason.should.be.equal('The note has been already spent')
-    })
-
-    it('should prevent double spend with overflow', async () => {
-      const deposit = generateDeposit()
-      await tree.insert(deposit.commitment)
-      await tornado.deposit(toFixedHex(deposit.commitment), { value, from: sender })
-
-      const { root, path_elements, path_index } = await tree.path(0)
-
-      const input = stringifyBigInts({
+      const { logsA } = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' })
+    
+      //Second submit withdraw proof
+      const inputB = stringifyBigInts({
         root,
         nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
         nullifier: deposit.nullifier,
@@ -288,9 +316,51 @@ contract('ETHTornado', accounts => {
         pathElements: path_elements,
         pathIndices: path_index,
       })
+      const proofDataB = await websnarkUtils.genWitnessAndProve(groth16, inputB, circuit, proving_key)
+      let output = websnarkUtils.toSolidityInput(proofDataB)
+      let proofB = output.proof
+
+      const argsB = [
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
+      ]
+      await tornado.withdraw(proofB, ...argsB, { from: relayer }).should.be.fulfilled
+      const error = await tornado.withdraw(proofB, ...argsB, { from: relayer }).should.be.rejected
+      error.reason.should.be.equal('The note has been already spent')
+    })
+    
+    it('should prevent double spend with overflow', async () => {
+      const deposit = generateDeposit()
+      await tree.insert(deposit.commitment)
+      await tornado.deposit(toFixedHex(deposit.commitment), { value, from: sender })
+
+      const { root, path_elements, path_index } = await tree.path(0)
+      //First approve withdraw by submitting proof with address contract tornado
+      const input = stringifyBigInts({
+        // public
+        root,
+        nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
+        relayer,
+        recipient: tornado.address,
+        fee,
+        refund,
+
+        // private
+        nullifier: deposit.nullifier,
+        secret: deposit.secret,
+        pathElements: path_elements,
+        pathIndices: path_index,
+      })
       const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
       const { proof } = websnarkUtils.toSolidityInput(proofData)
-      const args = [
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
         toFixedHex(input.root),
         toFixedHex(toBN(input.nullifierHash).add(toBN('21888242871839275222246405745257275088548364400416034343698204186575808495617'))),
         toFixedHex(input.recipient, 20),
@@ -298,18 +368,50 @@ contract('ETHTornado', accounts => {
         toFixedHex(input.fee),
         toFixedHex(input.refund)
       ]
-      const error = await tornado.withdraw(proof, ...args, { from: relayer }).should.be.rejected
+      const error  = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' }).should.be.rejected
       error.reason.should.be.equal('verifier-gte-snark-scalar-field')
     })
-
+    
     it('fee should be less or equal transfer value', async () => {
       const deposit = generateDeposit()
       await tree.insert(deposit.commitment)
       await tornado.deposit(toFixedHex(deposit.commitment), { value, from: sender })
 
       const { root, path_elements, path_index } = await tree.path(0)
-      const largeFee = bigInt(value).add(bigInt(1))
+      //First approve withdraw by submitting proof with address contract tornado
       const input = stringifyBigInts({
+        // public
+        root,
+        nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
+        relayer,
+        recipient: tornado.address,
+        fee,
+        refund,
+
+        // private
+        nullifier: deposit.nullifier,
+        secret: deposit.secret,
+        pathElements: path_elements,
+        pathIndices: path_index,
+      })
+      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
+      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
+        toFixedHex(input.root),
+        toFixedHex(input.nullifierHash),
+        toFixedHex(input.recipient, 20),
+        toFixedHex(input.relayer, 20),
+        toFixedHex(input.fee),
+        toFixedHex(input.refund)
+      ]
+      const { logsA } = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' })
+    
+      //Second submit withdraw proof
+      const largeFee = bigInt(value).add(bigInt(1))
+      const inputB = stringifyBigInts({
         root,
         nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
         nullifier: deposit.nullifier,
@@ -322,20 +424,21 @@ contract('ETHTornado', accounts => {
         pathIndices: path_index,
       })
 
-      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
-      const { proof } = websnarkUtils.toSolidityInput(proofData)
-      const args = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
-        toFixedHex(input.recipient, 20),
-        toFixedHex(input.relayer, 20),
-        toFixedHex(input.fee),
-        toFixedHex(input.refund)
+      const proofDataB = await websnarkUtils.genWitnessAndProve(groth16, inputB, circuit, proving_key)
+      let output = websnarkUtils.toSolidityInput(proofDataB)
+      let proofB = output.proof
+      const argsB = [
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
       ]
-      const error = await tornado.withdraw(proof, ...args, { from: relayer }).should.be.rejected
+      const error = await tornado.withdraw(proofB, ...argsB, { from: relayer }).should.be.rejected
       error.reason.should.be.equal('Fee exceeds transfer value')
     })
-
+  
     it('should throw for corrupted merkle tree root', async () => {
       const deposit = generateDeposit()
       await tree.insert(deposit.commitment)
@@ -348,7 +451,7 @@ contract('ETHTornado', accounts => {
         root,
         nullifier: deposit.nullifier,
         relayer: operator,
-        recipient,
+        recipient: tornado.address,
         fee,
         refund,
         secret: deposit.secret,
@@ -367,7 +470,7 @@ contract('ETHTornado', accounts => {
         toFixedHex(input.fee),
         toFixedHex(input.refund)
       ]
-      const error = await tornado.withdraw(proof, ...args, { from: relayer }).should.be.rejected
+      const error = await tornado.withdrawApprove(proof, ...args, { from: relayer }).should.be.rejected
       error.reason.should.be.equal('Cannot find your merkle root')
     })
 
@@ -377,8 +480,39 @@ contract('ETHTornado', accounts => {
       await tornado.deposit(toFixedHex(deposit.commitment), { value, from: sender })
 
       let { root, path_elements, path_index } = await tree.path(0)
-
+      //First approve withdraw by submitting proof with address contract tornado
       const input = stringifyBigInts({
+        // public
+        root,
+        nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
+        relayer,
+        recipient: tornado.address,
+        fee,
+        refund,
+
+        // private
+        nullifier: deposit.nullifier,
+        secret: deposit.secret,
+        pathElements: path_elements,
+        pathIndices: path_index,
+      })
+      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
+      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
+        toFixedHex(input.root),
+        toFixedHex(input.nullifierHash),
+        toFixedHex(input.recipient, 20),
+        toFixedHex(input.relayer, 20),
+        toFixedHex(input.fee),
+        toFixedHex(input.refund)
+      ]
+      const { logsA } = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' })
+    
+      //Second submit withdraw proof
+      const inputB = stringifyBigInts({
         root,
         nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
         nullifier: deposit.nullifier,
@@ -390,43 +524,42 @@ contract('ETHTornado', accounts => {
         pathElements: path_elements,
         pathIndices: path_index,
       })
-      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
-      let { proof } = websnarkUtils.toSolidityInput(proofData)
-      const args = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
-        toFixedHex(input.recipient, 20),
-        toFixedHex(input.relayer, 20),
-        toFixedHex(input.fee),
-        toFixedHex(input.refund)
+      const proofDataB = await websnarkUtils.genWitnessAndProve(groth16, inputB, circuit, proving_key)
+      let output = websnarkUtils.toSolidityInput(proofDataB)
+      let proofB = output.proof
+      const argsB = [
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
       ]
       let incorrectArgs
-      const originalProof = proof.slice()
-
+      const originalProof = proofB.slice()
       // recipient
       incorrectArgs = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
         toFixedHex('0x0000000000000000000000007a1f9131357404ef86d7c38dbffed2da70321337', 20),
-        toFixedHex(input.relayer, 20),
-        toFixedHex(input.fee),
-        toFixedHex(input.refund)
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
       ]
-      let error = await tornado.withdraw(proof, ...incorrectArgs, { from: relayer }).should.be.rejected
+      let error = await tornado.withdraw(proofB, ...incorrectArgs, { from: relayer }).should.be.rejected
       error.reason.should.be.equal('Invalid withdraw proof')
-
       // fee
       incorrectArgs = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
-        toFixedHex(input.recipient, 20),
-        toFixedHex(input.relayer, 20),
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
         toFixedHex('0x000000000000000000000000000000000000000000000000015345785d8a0000'),
-        toFixedHex(input.refund)
+        toFixedHex(inputB.refund)
       ]
-      error = await tornado.withdraw(proof, ...incorrectArgs, { from: relayer }).should.be.rejected
+      error = await tornado.withdraw(proofB, ...incorrectArgs, { from: relayer }).should.be.rejected
       error.reason.should.be.equal('Invalid withdraw proof')
-
+    
       // nullifier
       incorrectArgs = [
         toFixedHex(input.root),
@@ -436,15 +569,15 @@ contract('ETHTornado', accounts => {
         toFixedHex(input.fee),
         toFixedHex(input.refund)
       ]
-      error = await tornado.withdraw(proof, ...incorrectArgs, { from: relayer }).should.be.rejected
+      error = await tornado.withdrawApprove(proofB, ...incorrectArgs, { from: relayer }).should.be.rejected
       error.reason.should.be.equal('Invalid withdraw proof')
-
+      
       // proof itself
-      proof = '0xbeef' + proof.substr(6)
-      await tornado.withdraw(proof, ...args, { from: relayer }).should.be.rejected
+      proofB = '0xbeef' + proofB.substr(6)
+      await tornado.withdraw(proofB, ...argsB, { from: relayer }).should.be.rejected
 
       // should work with original values
-      await tornado.withdraw(originalProof, ...args, { from: relayer }).should.be.fulfilled
+      await tornado.withdraw(originalProof, ...argsB, { from: relayer }).should.be.fulfilled
     })
 
     it('should reject with non zero refund', async () => {
@@ -453,8 +586,39 @@ contract('ETHTornado', accounts => {
       await tornado.deposit(toFixedHex(deposit.commitment), { value, from: sender })
 
       const { root, path_elements, path_index } = await tree.path(0)
-
+      //First approve withdraw by submitting proof with address contract tornado
       const input = stringifyBigInts({
+        // public
+        root,
+        nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
+        relayer,
+        recipient: tornado.address,
+        fee,
+        refund,
+
+        // private
+        nullifier: deposit.nullifier,
+        secret: deposit.secret,
+        pathElements: path_elements,
+        pathIndices: path_index,
+      })
+      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
+      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
+        toFixedHex(input.root),
+        toFixedHex(input.nullifierHash),
+        toFixedHex(input.recipient, 20),
+        toFixedHex(input.relayer, 20),
+        toFixedHex(input.fee),
+        toFixedHex(input.refund)
+      ]
+      const { logsA } = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' })
+    
+      //Second submit withdraw proof
+      const inputB = stringifyBigInts({
         nullifierHash: pedersenHash(deposit.nullifier.leInt2Buff(31)),
         root,
         nullifier: deposit.nullifier,
@@ -467,20 +631,22 @@ contract('ETHTornado', accounts => {
         pathIndices: path_index,
       })
 
-      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
-      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      const proofDataB = await websnarkUtils.genWitnessAndProve(groth16, inputB, circuit, proving_key)
+      let output = websnarkUtils.toSolidityInput(proofDataB)
+      let proofB = output.proof
 
-      const args = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
-        toFixedHex(input.recipient, 20),
-        toFixedHex(input.relayer, 20),
-        toFixedHex(input.fee),
-        toFixedHex(input.refund)
+      const argsB = [
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
       ]
-      const error = await tornado.withdraw(proof, ...args, { from: relayer }).should.be.rejected
+      const error = await tornado.withdraw(proofB, ...argsB, { from: relayer }).should.be.rejected
       error.reason.should.be.equal('Refund value is supposed to be zero for ETH instance')
     })
+
   })
 
   describe('#changeOperator', () => {
@@ -541,7 +707,39 @@ contract('ETHTornado', accounts => {
       const { root, path_elements, path_index } = await tree.path(1)
 
       // Circuit input
+      //First approve withdraw by submitting proof with address contract tornado
       const input = stringifyBigInts({
+        // public
+        root,
+        nullifierHash: pedersenHash(deposit2.nullifier.leInt2Buff(31)),
+        relayer,
+        recipient: tornado.address,
+        fee,
+        refund,
+
+        // private
+        nullifier: deposit2.nullifier,
+        secret: deposit2.secret,
+        pathElements: path_elements,
+        pathIndices: path_index,
+      })
+      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
+      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      // Uncomment to measure gas usage
+      // gas = await tornado.withdraw.estimateGas(proof, publicSignals, { from: relayer, gasPrice: '0' })
+      // console.log('withdraw gas:', gas)
+      let args = [
+        toFixedHex(input.root),
+        toFixedHex(input.nullifierHash),
+        toFixedHex(input.recipient, 20),
+        toFixedHex(input.relayer, 20),
+        toFixedHex(input.fee),
+        toFixedHex(input.refund)
+      ]
+      const { logsA } = await tornado.withdrawApprove(proof, ...args, { from: relayer, gasPrice: '0' })
+    
+      //Second submit withdraw proof
+      const inputB = stringifyBigInts({
         // public
         root,
         nullifierHash: pedersenHash(deposit2.nullifier.leInt2Buff(31)),
@@ -558,19 +756,20 @@ contract('ETHTornado', accounts => {
       })
 
 
-      const proofData = await websnarkUtils.genWitnessAndProve(groth16, input, circuit, proving_key)
-      const { proof } = websnarkUtils.toSolidityInput(proofData)
+      const proofDataB = await websnarkUtils.genWitnessAndProve(groth16, inputB, circuit, proving_key)
+      let output = websnarkUtils.toSolidityInput(proofDataB)
+      let proofB = output.proof
 
-      const args = [
-        toFixedHex(input.root),
-        toFixedHex(input.nullifierHash),
-        toFixedHex(input.recipient, 20),
-        toFixedHex(input.relayer, 20),
-        toFixedHex(input.fee),
-        toFixedHex(input.refund)
+      const argsB = [
+        toFixedHex(inputB.root),
+        toFixedHex(inputB.nullifierHash),
+        toFixedHex(inputB.recipient, 20),
+        toFixedHex(inputB.relayer, 20),
+        toFixedHex(inputB.fee),
+        toFixedHex(inputB.refund)
       ]
 
-      await tornado.withdraw(proof, ...args, { from: relayer, gasPrice: '0' })
+      await tornado.withdraw(proofB, ...argsB, { from: relayer, gasPrice: '0' })
 
       const nullifierHash1 = toFixedHex(pedersenHash(deposit1.nullifier.leInt2Buff(31)))
       const nullifierHash2 = toFixedHex(pedersenHash(deposit2.nullifier.leInt2Buff(31)))
